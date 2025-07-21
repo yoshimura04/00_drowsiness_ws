@@ -1,0 +1,4 @@
+Event Ext Triggers: 130
+Frame Actual Count: 65
+Frame Result Count: 65
+Frame Diff   Count: 0
