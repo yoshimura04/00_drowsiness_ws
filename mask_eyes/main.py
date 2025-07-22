@@ -121,9 +121,14 @@ if __name__ == "__main__":
     # cv2.imwrite("output_with_eye_points.jpg", out_img)
 
     # 動画テスト
+    # drawer.draw_eye_points_in_video(
+    #     "/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/recording_250708_224544_288.mp4",
+    #     "/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/output_video_with_eye_points.mp4"
+    # )
+
     drawer.draw_eye_points_in_video(
-        "/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/recording_250708_224544_288.mp4",
-        "/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/output_video_with_eye_points.mp4"
+        "/home/carrobo2024/00_drowsiness_ws/video/dynamic_objects_in_the_background/recording_250708_223130_063.mp4",
+        "/home/carrobo2024/00_drowsiness_ws/video/dynamic_objects_in_the_background/output_video_with_eye_points.mp4"
     )
 
 # no_dynamic_objects : 373 frames

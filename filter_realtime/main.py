@@ -336,11 +336,11 @@ class SNNFilter:
 # raw_path = "/home/carrobo2024/00_drowsiness_ws/recording_250321_143628_260.raw"
 # raw_path = "/home/carrobo2024/00_drowsiness_ws/video/02/recording_250529_212441_423.raw"
 # raw_path = "/home/carrobo2024/00_drowsiness_ws/video/02/recording_250529_212441_423.raw"
-raw_path = "/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/recording_250708_224544_288.raw"
+raw_path = "/home/carrobo2024/00_drowsiness_ws/video/dynamic_objects_in_the_background/recording_250708_223130_063.raw"
 
 snn_filter = SNNFilter(raw_path)
-snn_filter.load_evt3(save_npy_path="/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/raw_event_data.npy")
-snn_filter.events_to_video_frames(snn_filter.raw_event_data, '/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/raw_event_data.mp4')
+snn_filter.load_evt3(save_npy_path="/home/carrobo2024/00_drowsiness_ws/video/dynamic_objects_in_the_background/raw_event_data.npy")
+snn_filter.events_to_video_frames(snn_filter.raw_event_data, '/home/carrobo2024/00_drowsiness_ws/video/dynamic_objects_in_the_background/raw_event_data.mp4')
 # snn_filter.snn_filter_sequential(output_path="/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/snn_filtered_events.npy")
 # snn_filter.events_to_video_frames(snn_filter.snn_filtered_events, '/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/snn_filtered_events.mp4')
 
