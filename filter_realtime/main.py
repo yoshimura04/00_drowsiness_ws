@@ -174,7 +174,7 @@ class SNNFilter:
         np.save("snn_filtered_events.npy", self.snn_filtered_events)
         print(f"snn_filtered_events.npyに保存しました ({len(self.snn_filtered_events)}件)")
 
-    def snn_filter_sequential(self, dt_us=1000, output_path="snn_filtered_events.npy"):
+    def snn_filter_sequential(self, output_path, dt_us=1000):
         """
         EVT3ファイルを逐次的に読み込みながら、SNNでフィルタ処理を行う。
         イベント全体をメモリに保持せず、メモリ効率を大幅に改善する。
@@ -260,6 +260,7 @@ class SNNFilter:
         arrays = [np.load(f) for f in all_chunks]
         self.snn_filtered_events = np.concatenate(arrays, axis=0)
         np.save(output_path, self.snn_filtered_events)
+        print(f"ffffffffff")
 
         # チャンクごとにnpyを保存するため一括用のプログラムはコメントアウト
         # 保存処理
@@ -276,6 +277,7 @@ class SNNFilter:
         print(f"snnフィルタにかかった時間: {elapsed:.2f} 秒")
 
     def filter_3d(self, load_npy_path, save_npy_path):
+        start_time = time.perf_counter()
         # filtered_events.npyを読み込む
         events = np.load(load_npy_path)
         print(f"snnでフィルタリングされたイベントデータを取得しました")
@@ -325,6 +327,10 @@ class SNNFilter:
         else:
             self.filtered_3d_events = np.empty((0, 4))  # 4列の空配列
 
+        end_time = time.perf_counter()
+        elapsed = end_time - start_time
+        print(f"3dフィルタにかかった時間: {elapsed:.2f} 秒")
+
         print(f"---------------3dフィルタリング終了----------------")
         print("イベントの形状:", self.filtered_3d_events.shape)  # 例: (N, 4)
         print("最初の5つのイベント:\n", self.filtered_3d_events[:5])
@@ -335,18 +341,36 @@ class SNNFilter:
 # イベントデータの取得
 # raw_path = "/home/carrobo2024/00_drowsiness_ws/recording_250321_143628_260.raw"
 # raw_path = "/home/carrobo2024/00_drowsiness_ws/video/02/recording_250529_212441_423.raw"
-# raw_path = "/home/carrobo2024/00_drowsiness_ws/video/02/recording_250529_212441_423.raw"
-raw_path = "/home/carrobo2024/00_drowsiness_ws/video/dynamic_objects_in_the_background/recording_250708_223130_063.raw"
-
+raw_path = "/home/carrobo2024/00_drowsiness_ws/video/02/recording_250529_212441_423.raw"
+# raw_path = "/home/carrobo2024/00_drowsiness_ws/video/dynamic_objects_in_the_background/recording_250708_223130_063.raw"
 snn_filter = SNNFilter(raw_path)
-snn_filter.load_evt3(save_npy_path="/home/carrobo2024/00_drowsiness_ws/video/dynamic_objects_in_the_background/raw_event_data.npy")
-snn_filter.events_to_video_frames(snn_filter.raw_event_data, '/home/carrobo2024/00_drowsiness_ws/video/dynamic_objects_in_the_background/raw_event_data.mp4')
-# snn_filter.snn_filter_sequential(output_path="/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/snn_filtered_events.npy")
-# snn_filter.events_to_video_frames(snn_filter.snn_filtered_events, '/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/snn_filtered_events.mp4')
 
-# snn_filter.filter_3d(
-#     load_npy_path="/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/snn_filtered_events.npy",
-#     save_npy_path="/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/3d_filtered_events.npy")
-# snn_filter.events_to_video_frames(snn_filter.filtered_3d_events,
-#                                   '/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/3d_filtered_events.mp4')
+
+# save_npy_path="/home/carrobo2024/00_drowsiness_ws/video/dynamic_objects_in_the_background/raw_event_data.npy"
+save_npy_path="/home/carrobo2024/00_drowsiness_ws/video/02/raw_event_data.npy"
+snn_filter.load_evt3(save_npy_path)
+
+
+output_path = "/home/carrobo2024/00_drowsiness_ws/video/02/raw_event_data.mp4"
+# snn_filter.events_to_video_frames(snn_filter.raw_event_data, output_path)
+
+# output_path="/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/snn_filtered_events.npy"
+output_path="/home/carrobo2024/00_drowsiness_ws/video/02/snn_filtered_events.npy"
+snn_filter.snn_filter_sequential(output_path)
+
+# output_path = "/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/snn_filtered_events.mp4"
+output_path = "/home/carrobo2024/00_drowsiness_ws/video/02/snn_filtered_events.mp4"
+snn_filter.events_to_video_frames(snn_filter.snn_filtered_events, output_path)
+
+# load_npy_path="/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/snn_filtered_events.npy"
+# save_npy_path="/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/3d_filtered_events.npy"
+load_npy_path="/home/carrobo2024/00_drowsiness_ws/video/02/snn_filtered_events.npy"
+save_npy_path="/home/carrobo2024/00_drowsiness_ws/video/02/3d_filtered_events.npy"
+snn_filter.filter_3d(
+    load_npy_path,
+    save_npy_path)
+
+# output_path = '/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/3d_filtered_events.mp4'
+output_path = '/home/carrobo2024/00_drowsiness_ws/video/02/3d_filtered_events.mp4'
+snn_filter.events_to_video_frames(snn_filter.filtered_3d_events, output_path)
 
