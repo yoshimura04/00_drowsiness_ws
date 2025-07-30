@@ -6,12 +6,14 @@ from scipy.ndimage import label
 import os
 import cv2
 from tqdm import tqdm
+from matplotlib.colors import ListedColormap
 
 class waveCluster:
     def __init__(self, input_npy_path, trigger_npy_path=None):
         self.input_npy_path = input_npy_path
         self.H, self.W = 720, 1280
-        plt.ion()
+        # plt.ion()
+        plt.ioff()
 
         # ─── トリガーイベント読み込み ───
         if trigger_npy_path is not None and os.path.exists(trigger_npy_path):
@@ -29,10 +31,23 @@ class waveCluster:
             print("No trigger file loaded.")
     
     def test(self,
-            buffer_time=10000,
+             out_dir,
+            buffer_time=30000,
             step_time=1000,
             grid_H=360,
             grid_W=640,):
+        
+        # grid_H, grid_W = 180, 320
+        grid_H, grid_W = 720, 1280
+
+        os.makedirs(out_dir, exist_ok=True)
+
+        # --- 動画ライターの初期化 ---
+        # fps = 30
+        # fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        # vid_w, vid_h = int(12*150), int(4*150)
+        # video_path = os.path.join(out_dir, 'clusters_video.mp4')
+        # writer = cv2.VideoWriter(video_path, fourcc, fps, (vid_w, vid_h))
 
         # グリッドセルあたりのピクセル幅・高さ
         cell_h = self.H / grid_H
@@ -151,7 +166,8 @@ class waveCluster:
             # std_A  = np.std(cA1)
             # alpha = 1.0  # 調整パラメータ
             # threshold = mean_A + alpha * std_A
-            threshold = 10
+            # threshold = 1
+            threshold = 0
 
             # 2) バイナリマスクを作成（True がクラスタ候補領域）
             mask = cA1 > threshold
@@ -164,11 +180,32 @@ class waveCluster:
             # plt.pause(0.001)  # 描画を更新して0.001秒待つ
             # plt.close()       # 自動で閉じる
 
+            # -------------クロージングとオープニングでノイズ除去------------------
+            mask_uint8 = (mask.astype(np.uint8)) * 255
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (10,10))
+            mask = cv2.morphologyEx(
+                mask_uint8,
+                cv2.MORPH_CLOSE,
+                kernel,
+                iterations=1
+            )
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (1,1))
+            mask = cv2.morphologyEx(
+                mask,
+                cv2.MORPH_OPEN,
+                kernel,
+                iterations=1
+            )
+            mask = (mask > 0)
+
             # -------------6近傍でラベリング（step5）----------------
 
-            structure = np.array([[0,1,0],
+            # structure = np.array([[0,1,0],
+            #                     [1,1,1],
+            #                     [0,1,0]], dtype=bool)
+            structure = np.array([[1,1,1],
                                 [1,1,1],
-                                [0,1,0]], dtype=bool)
+                                [1,1,1]], dtype=bool)
             labeled, num_clusters = label(mask, structure=structure)
 
             # print(f"検出クラスタ数: {num_clusters}")
@@ -176,6 +213,7 @@ class waveCluster:
 
             # -------------クラスタ重心の計算----------------
             centroids = []
+            
             for lab in range(1, num_clusters+1):
                 ys, xs = np.where(labeled == lab)
                 if len(xs) == 0:
@@ -183,6 +221,7 @@ class waveCluster:
                 cy = ys.mean()
                 cx = xs.mean()
                 centroids.append((cy, cx))
+            
 
             # --- 重心を描画して可視化 ---
             # plt.figure(figsize=(6,4))
@@ -208,59 +247,136 @@ class waveCluster:
                 else:
                     title_trigger = "No Triggers"
 
+                '''
+                if 15 < trigger_idx < 30: # 処理が重くなるため制限
+
+                    # --- ① マスク画像を二値化してクラスタ解像度に縮小 ---
+                    # frame = self.frames[trigger_idx]
+                    # gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    # h_l, w_l = labeled.shape
+                    # _, mask_frame_bin = cv2.threshold(gray, 1, 1, cv2.THRESH_BINARY)
+                    # mask_small = cv2.resize(
+                    #     mask_frame_bin.astype(np.uint8),
+                    #     (w_l, h_l),
+                    #     interpolation=cv2.INTER_NEAREST
+                    # ).astype(bool)
+
+                    # --- ② クラスタマスク＆重なり率計算 ---
+                    # cluster_mask = (labeled > 0)
+                    # n_cluster   = np.count_nonzero(cluster_mask)
+                    # n_overlap   = np.count_nonzero(cluster_mask & mask_small)
+                    # ratio        = (n_overlap / n_cluster) if n_cluster > 0 else 0.0
+
+                    
+                    # ---------- 生フレームとの並列表示用に 1×2 のサブプロットを用意 -------------
+                    # fig, (ax_frame, ax_cluster) = plt.subplots(1, 2, figsize=(12,4))
+
+                    # # 左：対応する生フレーム
+                    # ax_frame.imshow(self.frames[trigger_idx])
+                    # # ax_frame.axis('off')
+                    # ax_frame.set_title(f"Frame @ {next_start}μs", fontsize=8)
+                    
+                    # # 右：クラスタマップ
+                    # # tab20 の色配列を取得
+                    # base_colors = plt.cm.tab20.colors
+                    # # 先頭に白を追加して新しいカラーマップを作成
+                    # cmap = ListedColormap(['white', *base_colors])
+                    # im = ax_cluster.imshow(labeled, cmap=cmap, interpolation='nearest')
+                    # for (cy, cx) in centroids:
+                    #     ax_cluster.scatter(cx, cy, s=10, c='white', marker='o', edgecolors='black')
+                    # # ax_cluster.axis('off')
+                    
+
+
+                    plt.figure(figsize=(6,4))
+                    base_colors = plt.cm.tab20.colors
+                    cmap = ListedColormap(['white', *base_colors])
+                    plt.imshow(labeled, cmap=cmap, interpolation='nearest')
+
+                    # for (cy, cx) in centroids:
+                    #     plt.scatter(cx, cy, s=10, c='black', marker='o', edgecolors='white')
+
+                    # # 目と口の認識と、それらに点の描写
+                    # if num_clusters <= 3:
+                    #     if num_clusters == 0:
+                    #         print(f"クラスタなし")
+
+                    #     elif num_clusters == 1:
+                    #         print(f"口を検出")
+                    #         # 口のクラスタの重心に赤点を打つ
+                    #         cy, cx = centroids[0]
+                    #         plt.scatter(cx, cy, s=50, c='red', marker='o', edgecolors='white')
+
+                    #     elif num_clusters == 2:
+                    #         print(f"目を検出")
+                    #         # 目のクラスタの重心に青点を打つ
+                    #         for cy, cx in centroids:
+                    #             plt.scatter(cx, cy, s=50, c='blue', marker='o', edgecolors='white')
+
+                    #     else:
+                    #         print(f"目と口を検出")
+                    #         # 重心の y 座標で上下を判定
+                    #         # 上側（小さい cy）が目、それ以外が口
+                    #         centroids_sorted = sorted(centroids, key=lambda t: t[0])
+                    #         eye_centroids = centroids_sorted[:2]
+                    #         mouth_centroid = centroids_sorted[2]
+
+                    #         # 目のクラスタの重心に青点を打つ（画像の上に位置しているクラスタ）
+                    #         for cy, cx in eye_centroids:
+                    #             plt.scatter(cx, cy, s=50, c='blue', marker='o', edgecolors='white')
+                    #         # 口のクラスタの重心に赤点を打つ
+                    #         cy, cx = mouth_centroid
+                    #         plt.scatter(cx, cy, s=50, c='red', marker='o', edgecolors='white')
+
+                    title_trigger = f"t={next_start}μs | Number of Clusters={num_clusters} | Closest Trigger: #{trigger_idx} @ {self.trigger_times[trigger_idx]}μs | Overlap={ratio}"
+
+                    # fig.colorbar(im, ax=ax_cluster, fraction=0.046, pad=0.04)
+                    # plt.colorbar()
+                    # plt.title(f"t={next_start}μs | Number of Clusters={num_clusters}")
+                    # ax_cluster.set_title(title_trigger, fontsize=8)
+                    plt.tight_layout()
+                    # plt.show()
+                    # plt.pause(0.001)  # 描画を更新して0.001秒待つ
+
+                    plt.title(title_trigger, fontsize=5)
+
+                    # --- Figure → NumPy image へ変換して動画に書き込む ---
+                    # fig.canvas.draw()
+                    # # RGB のバイト列を取得して
+                    # img = np.frombuffer(fig.canvas.tostring_rgb(), dtype='uint8')
+                    # # 画像サイズにリシェイプ
+                    # img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+                    # # RGB→BGR
+                    # img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                    # # writer.write(img_bgr)
+                    
+                    filename = f"{out_dir}/frame_{next_start}us_clusters_{num_clusters}.png"
+                    plt.savefig(filename, dpi=150)
+                    # plt.close(fig)       # 自動で閉じる
+                    plt.close()
+                    '''
+
+            # -------------------画像を指定したフォルダに保存--------------------
+            if 15 < trigger_idx < 30:
+                title = f"t={next_start}μs | Number of Clusters={num_clusters} | Closest Trigger: #{trigger_idx} @ {self.trigger_times[trigger_idx]}μs"
+                filename = f"{out_dir}/frame_{next_start}us.png"
                 plt.figure(figsize=(6,4))
-                plt.imshow(labeled, cmap='tab20')
-
+                base_colors = plt.cm.tab20.colors
+                cmap = ListedColormap(['white', *base_colors])
+                plt.imshow(labeled, cmap=cmap, interpolation='nearest')
+                # plt.imshow(cA1)
                 for (cy, cx) in centroids:
-                    plt.scatter(cx, cy, s=10, c='black', marker='o', edgecolors='white')
-
-                if num_clusters <= 3:
-                    if num_clusters == 0:
-                        print(f"クラスタなし")
-
-                    elif num_clusters == 1:
-                        print(f"口を検出")
-                        # 口のクラスタの重心に赤点を打つ
-                        cy, cx = centroids[0]
-                        plt.scatter(cx, cy, s=50, c='red', marker='o', edgecolors='white')
-
-                    elif num_clusters == 2:
-                        print(f"目を検出")
-                        # 目のクラスタの重心に青点を打つ
-                        for cy, cx in centroids:
-                            plt.scatter(cx, cy, s=50, c='blue', marker='o', edgecolors='white')
-
-                    else:
-                        print(f"目と口を検出")
-                        # 重心の y 座標で上下を判定
-                        # 上側（小さい cy）が目、それ以外が口
-                        centroids_sorted = sorted(centroids, key=lambda t: t[0])
-                        eye_centroids = centroids_sorted[:2]
-                        mouth_centroid = centroids_sorted[2]
-
-                        # 目のクラスタの重心に青点を打つ（画像の上に位置しているクラスタ）
-                        for cy, cx in eye_centroids:
-                            plt.scatter(cx, cy, s=50, c='blue', marker='o', edgecolors='white')
-                        # 口のクラスタの重心に赤点を打つ
-                        cy, cx = mouth_centroid
-                        plt.scatter(cx, cy, s=50, c='red', marker='o', edgecolors='white')
-
-                plt.colorbar()
-                # plt.title(f"t={next_start}μs | Number of Clusters={num_clusters}")
-                plt.title(title_trigger, fontsize=5)
+                    plt.scatter(cx, cy, marker='s', s=1, c='black', linewidths=0)
                 plt.tight_layout()
-                # plt.show()
-                plt.pause(0.001)  # 描画を更新して0.001秒待つ
-
-                out_dir = "output_images"
-                os.makedirs(out_dir, exist_ok=True)
-                filename = f"{out_dir}/frame_{next_start}us_clusters_{num_clusters}.png"
-                
+                plt.title(title, fontsize=5)
                 plt.savefig(filename, dpi=150)
-                plt.close()       # 自動で閉じる
-
+                plt.close()
 
             # current_start = next_start
+        
+        # --- 動画ファイルをクローズ ---
+        # writer.release()
+        # print(f"Saved clusters video to {video_path}")
 
     def plot_count_mat(self, count_mat):
         """
@@ -328,14 +444,25 @@ class waveCluster:
         plt.title(f"Frame {idx} / {len(self.frames)}")
         plt.show(block=True)
 
-npy_path = "/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/raw_event_data.npy"
-trigger_npy_path = "/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/triggers.npy"
-mask_video_path = "/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/output_video_with_eye_points.mp4"
+# npy_path = "/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/raw_event_data.npy"
+# trigger_npy_path = "/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/triggers.npy"
+npy_path = "/home/carrobo2024/00_drowsiness_ws/video/dynamic_objects_in_the_background/raw_event_data.npy"
+trigger_npy_path = "/home/carrobo2024/00_drowsiness_ws/video/dynamic_objects_in_the_background/triggers.npy"
+
 
 wave_cluster = waveCluster(npy_path, trigger_npy_path)
-wave_cluster.test()
+
+# mask_video_path = "/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/output_video_with_eye_points.mp4"
+mask_video_path = "/home/carrobo2024/00_drowsiness_ws/video/dynamic_objects_in_the_background/output_video_with_eye_points.mp4"
+
+wave_cluster.load_video_frames(mask_video_path)
+
+# out_dir = "/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/output_images"
+out_dir = "/home/carrobo2024/00_drowsiness_ws/video/dynamic_objects_in_the_background/test"
+
+wave_cluster.test(out_dir)
 
 
 
-# wave_cluster.load_video_frames(mask_video_path)
+# test
 # wave_cluster.show_frame(idx=100)
