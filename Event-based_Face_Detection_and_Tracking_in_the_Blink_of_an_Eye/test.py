@@ -7,7 +7,12 @@ import pandas as pd
 import mediapipe as mp
 import csv
 import bisect
-
+try:
+    from tqdm import tqdm
+    _HAS_TQDM = True
+except Exception:
+    _HAS_TQDM = False
+from typing import Literal
 
 
 
@@ -57,6 +62,11 @@ class FrameProcessor:
         self.left_eye_coords = []
         self.right_eye_coords = []
 
+        total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total_frames <= 0:  # 取得できない場合はNoneで伸長バー
+            total_frames = None
+        pbar = tqdm(total=total_frames, desc="Annotating frames", unit="frame")
+
         while self.cap.isOpened():
             ret, frame = self.cap.read()
             if not ret:
@@ -103,9 +113,13 @@ class FrameProcessor:
 
             # 処理したフレームを出力動画に書き込み
             self.out.write(frame)
+
+            pbar.update(1)
         
-        print(f"left_eye_coords: {self.left_eye_coords}")
-        print(f"right_eye_coords: {self.right_eye_coords}")
+        pbar.close()
+
+        # print(f"left_eye_coords: {self.left_eye_coords}")
+        # print(f"right_eye_coords: {self.right_eye_coords}")
         print(f"フレーム数: {len(self.left_eye_coords)}")
 
         left_eye_array = np.array(self.left_eye_coords)
@@ -179,11 +193,16 @@ class EventProcessor:
         """
         reader = RawReader(file_path)
         self.event_data = []
+
+        pbar = tqdm(total=None, desc="Loading EVT3 events", unit="event")
         
         while not reader.is_done():
             events = reader.load_delta_t(time_window)
             if events is not None:
                 self.event_data.append(events)
+                pbar.update(len(events))
+        
+        pbar.close()
         
         self.event_data = np.concatenate(self.event_data)
         
@@ -199,7 +218,7 @@ class EventProcessor:
 
         try:
             self.trigger_events = reader.get_ext_trigger_events()
-            print(f"trigger events: {self.trigger_events}")
+            # print(f"trigger events: {self.trigger_events}")
             print(f"trigger events num: {len(self.trigger_events)}")
         except Exception as e:
             print("トリガーイベント取得中にエラーが発生しました:", e)
@@ -439,12 +458,17 @@ class EventProcessor:
         # 初期値
         global_activity_on[0] = a_on[0]
         global_activity_off[0] = a_off[0]
+
+        pbar = tqdm(total=max(n - 1, 0), desc="Accumulating activity", unit="step")
         
         for i in range(1, n):
             dt = unique_times[i] - unique_times[i - 1]
             decay = np.exp(-dt / self.tau)
             global_activity_on[i] = global_activity_on[i - 1] * decay + a_on[i]
             global_activity_off[i] = global_activity_off[i - 1] * decay + a_off[i]
+            pbar.update(1)
+        
+        pbar.close()
         
         # 結果をメンバ変数に保存
         self.activity_history_global_on = global_activity_on.tolist()
@@ -541,6 +565,9 @@ class EventProcessor:
         self.frame_events = []
 
         num_frames = len(self.trigger_events) // 2
+
+        pbar = tqdm(total=num_frames, desc="Extracting frame events", unit="frame")
+
         for i in range(num_frames):
             start_time = self.trigger_events[2 * i][1]
             end_time = self.trigger_events[2 * i + 1][1]
@@ -551,6 +578,10 @@ class EventProcessor:
 
             events_in_frame = self.event_data[start_index:end_index]
             self.frame_events.append(events_in_frame)
+
+            pbar.update(1)
+        
+        pbar.close()
         
         # print(f"frame_events: {self.frame_events}")
         # print(f"frame_events num: {len(self.frame_events)}")
@@ -618,7 +649,7 @@ class EventProcessor:
                 left_events_all.append(left_filtered)
             if right_filtered.size > 0:
                 right_events_all.append(right_filtered)
-        
+            
         # 各フレームのフィルタ結果を1つの配列に結合
         if left_events_all:
             self.left_eye_events = np.concatenate(left_events_all)
@@ -630,7 +661,7 @@ class EventProcessor:
         else:
             self.right_eye_events = np.empty(0, dtype=base_dtype)
 
-        print(f"left_eye_events: {self.left_eye_events}")
+        # print(f"left_eye_events: {self.left_eye_events}")
         print(f"left_eye_events num: {len(self.left_eye_events)}")
     
     def split_events(self, n, m):
@@ -1639,10 +1670,189 @@ class EventProcessor:
         fig.suptitle("Tile Activity Histories with Correlation-Based Highlighting", fontsize=12)
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         plt.show()
+
+    def process_eye_activity_and_save_csv(
+        self,
+        left_eye_coords,
+        right_eye_coords,
+        output_csv_path,
+        eye: str = "both",
+        margin: int = 20
+    ):
+        """
+        目周辺イベント抽出→アクティビティ計算→CSV保存を一括実行する。
+
+        Parameters
+        ----------
+        left_eye_coords : list[list[tuple[int,int]]]
+            各フレームの左目ランドマーク座標のリスト（FrameProcessor.left_eye_coords を想定）
+        right_eye_coords : list[list[tuple[int,int]]]
+            各フレームの右目ランドマーク座標のリスト（FrameProcessor.right_eye_coords を想定）
+        output_csv_path : str
+            保存先CSVパス（例: "eye_activity.csv"）
+        eye : {"left","right","both"}
+            どの目のイベントを使うか
+        margin : int
+            目領域のバウンディングボックスに加える余白（ピクセル）
+
+        Returns
+        -------
+        dict
+            {"eye": 使用した目種別, "num_events": 使用イベント数, "num_timepoints": アクティビティ系列長}
+        """
+        # 前提データの存在確認
+        if not hasattr(self, "event_data"):
+            raise RuntimeError("event_data が未読である。先に load_evt3(...) を実行すること。")
+        if not hasattr(self, "trigger_events") or len(getattr(self, "trigger_events", [])) < 2:
+            raise RuntimeError("trigger_events が不足している。EVT内の外部トリガ取得に失敗している可能性がある。")
+
+        # フレーム毎イベント（self.frame_events）が未作成なら作成
+        if not hasattr(self, "frame_events"):
+            self.get_frame_event_data()
+
+        # 目周辺イベントを抽出
+        self.filter_eye_events(left_eye_coords, right_eye_coords, margin=margin)
+
+        # どのイベントを使うか選択
+        if eye == "left":
+            events = getattr(self, "left_eye_events", None)
+        elif eye == "right":
+            events = getattr(self, "right_eye_events", None)
+        elif eye == "both":
+            # 左右を結合し、時系列順にソート
+            left_ev = getattr(self, "left_eye_events", None)
+            right_ev = getattr(self, "right_eye_events", None)
+            if left_ev is None or left_ev.size == 0:
+                events = right_ev
+            elif right_ev is None or right_ev.size == 0:
+                events = left_ev
+            else:
+                # 同一dtype前提で結合
+                events = np.concatenate([left_ev, right_ev])
+                # t で昇順に並べ替え
+                order = np.argsort(events["t"])
+                events = events[order]
+        else:
+            raise ValueError("eye は 'left' / 'right' / 'both' のいずれかである必要がある。")
+
+        # イベントが空なら終了
+        if events is None or events.size == 0:
+            # 空CSV（ヘッダのみ）を出力して返す
+            with open(output_csv_path, "w", newline="") as f:
+                import csv
+                writer = csv.writer(f)
+                writer.writerow(["time", "global_activity_on", "global_activity_off"])
+            print("目周辺イベントが見つからなかったため、空のCSVを出力した。")
+            return {"eye": eye, "num_events": 0, "num_timepoints": 0}
+
+        # アクティビティ計算（高速版）
+        self.calculate_global_activity_history_fast(events)
+
+        # CSV 保存
+        self.save_activity_history_to_csv(output_csv_path)
+
+        return {
+            "eye": eye,
+            "num_events": int(events.size),
+            "num_timepoints": int(len(self.time_history_global)),
+        }
+
+    def calculate_global_activity_history_binned(
+        self,
+        event_data,
+        bin_width_us: int = 1000,
+        time_ref: Literal["left","right","center"] = "right",
+        show_progress: bool = True,
+    ):
+        """
+        固定幅ビン（例: 1ms = 1000us）ごとにON/OFFイベント数を集計し、
+        各ビン境界で指数減衰＋加算の再帰式を回してグローバルアクティビティを計算する。
+
+        Parameters
+        ----------
+        event_data : np.ndarray
+            dtype が [('x','<u2'),('y','<u2'),('p','<i2'),('t','<i8')] を想定
+        bin_width_us : int
+            ビン幅（μs）
+        time_ref : {"left","right","center"}
+            出力の時刻列を、各ビンの左端/右端/中心のどれにするか
+        show_progress : bool
+            tqdm で進捗を表示（tqdmがない環境では無視）
+
+        Sets
+        ----
+        self.activity_history_global_on : list[float]
+        self.activity_history_global_off: list[float]
+        self.time_history_global        : list[int]
+        """
+        # 空なら終了
+        if event_data is None or event_data.size == 0:
+            self.activity_history_global_on  = []
+            self.activity_history_global_off = []
+            self.time_history_global         = []
+            return
+
+        t = event_data['t'].astype(np.int64)
+        p = event_data['p']
+
+        t_min = int(t.min())
+        t_max = int(t.max())
+
+        print(f"t_min : {t_min}")
+        print(f"t_max : {t_max}")
+
+        # ビン境界（右端を含むよう +bin_width_us）
+        edges = np.arange(t_min, t_max + bin_width_us, bin_width_us, dtype=np.int64)
+        if edges.size < 2:  # すごく短いデータへの安全策
+            edges = np.array([t_min, t_min + bin_width_us], dtype=np.int64)
+        n_bins = edges.size - 1
+        dt_each = np.diff(edges)  # 各ビン幅（通常は bin_width_us）
+
+        # ON/OFF のビン内イベント数を一発で集計
+        weights_on  = (p == 1).astype(np.float64)
+        weights_off = (p != 1).astype(np.float64)  # 0をOFFとみなす
+        on_counts,  _ = np.histogram(t, bins=edges, weights=weights_on)
+        off_counts, _ = np.histogram(t, bins=edges, weights=weights_off)
+
+        # 正規化（元のコード互換）
+        a_on  = on_counts  / self.scale
+        a_off = off_counts / self.scale
+
+        # 時刻列の基準
+        if time_ref == "left":
+            time_axis = edges[:-1]
+        elif time_ref == "center":
+            time_axis = edges[:-1] + (dt_each // 2)
+        else:  # "right"
+            time_axis = edges[1:]
+
+        # 再帰計算
+        global_on  = np.empty(n_bins, dtype=np.float64)
+        global_off = np.empty(n_bins, dtype=np.float64)
+
+        # 初期ビン
+        global_on[0]  = a_on[0]
+        global_off[0] = a_off[0]
+
+        it = range(1, n_bins)
+        if show_progress and _HAS_TQDM:
+            it = tqdm(it, desc="Accumulating (binned)", unit="bin")
+
+        for i in it:
+            decay = np.exp(-dt_each[i-1] / self.tau)
+            global_on[i]  = global_on[i-1]  * decay + a_on[i]
+            global_off[i] = global_off[i-1] * decay + a_off[i]
+
+        # 結果をメンバへ
+        self.activity_history_global_on  = global_on.tolist()
+        self.activity_history_global_off = global_off.tolist()
+        self.time_history_global         = time_axis.tolist()
     
 
    
-def convert_coordinates(img1_width, img1_height, img2_width, img2_height, coords):
+def convert_coordinates(img1_width, img1_height, img2_width, img2_height, coords,
+                        flip_horizontal=True, flip_vertical=False,
+                        x_offset=0, y_offset=0):
     """
     画像1と画像2は同じ内容ですがサイズが異なります。
     画像1上の各フレームごとに格納された複数の座標 (coords は形状 (N, M, 2))
@@ -1659,14 +1869,22 @@ def convert_coordinates(img1_width, img1_height, img2_width, img2_height, coords
     Returns:
         list: 画像2上の座標リスト。各要素はフレームごとの座標リスト (各座標は [new_x, new_y] の形式) です。
     """
+    sx = img2_width / img1_width
+    sy = img2_height / img1_height
+
     converted = []
-    for frame_coords in coords:
+    for frame_coords in tqdm(coords, desc="Converting coords", unit="frame"):
         frame_converted = []
-        for coord in frame_coords:
-            x, y = coord
-            new_x = x * (img2_width / img1_width)
-            new_y = y * (img2_height / img1_height)
-            frame_converted.append([new_x, new_y])
+        for x, y in frame_coords:
+            nx = x * sx
+            ny = y * sy
+            if flip_horizontal:
+                nx = (img2_width - 1) - nx
+            if flip_vertical:
+                ny = (img2_height - 1) - ny
+            nx += x_offset
+            ny += y_offset
+            frame_converted.append([nx, ny])
         converted.append(frame_converted)
     return converted
 
@@ -1878,8 +2096,76 @@ def main():
     correlation_by_tile = compute_blink_correlation_by_tile(test_data_processor.extracted_activity_by_tile, left_mean_blink_activity)
     test_data_processor.plot_tile_activity_with_extraction_highlight_with_correlation(correlation_by_tile)
 
+def process_eye_activity_and_save_csv(input_video_path="/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/recording_250708_224544_288.mp4",
+                                    output_video_path="/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/recording_250708_224544_288_output.mp4",
+                                    raw_path="/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/recording_250708_224544_288.raw",
+                                    output_csv_path="/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/left_eye_activity.csv",
+                                    eye="left",  # "left" / "right" / "both"
+                                    margin=20
+                                    ):
+
+    # 1) 顔ランドマークで目座標を取得（動画）
+    fp = FrameProcessor(input_video_path, output_video_path)
+    fp.annotate_video(max_num_faces=1)  # 結果は fp.left_eye_coords / fp.right_eye_coords に格納
+
+    # 2) EVT3 を読み込み、トリガからフレームを区切る
+    ep = EventProcessor()
+    ep.load_evt3(raw_path)         # ep.event_data / ep.trigger_events がセットされる
+    ep.get_frame_event_data()          # ep.frame_events がセットされる（未呼び出しでも統合関数内で自動実行）
+
+    # 3) 目イベント→アクティビティ→CSV を一括実行
+    conv_left  = convert_coordinates(fp.width, fp.height, ep.width, ep.height, fp.left_eye_coords)
+    conv_right = convert_coordinates(fp.width, fp.height, ep.width, ep.height, fp.right_eye_coords)
+    info = ep.process_eye_activity_and_save_csv(
+        left_eye_coords=conv_left,
+        right_eye_coords=conv_right,
+        output_csv_path=output_csv_path,
+        eye=eye,           # "left" / "right" / "both"
+        margin=margin
+    )
+    print(info)
+
+def process_eye_activity_binned_and_save_csv(input_video_path="/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/recording_250708_224544_288.mp4",
+                                    output_video_path="/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/recording_250708_224544_288_output.mp4",
+                                    raw_path="/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/recording_250708_224544_288.raw",
+                                    output_csv_path="/home/carrobo2024/00_drowsiness_ws/video/no_dynamic_objects_in_the_background/left_eye_activity_1ms_bins.csv",
+                                    margin=20,
+                                    eye="left",  # "left" / "right"
+                                    ):
+
+    # 1) 顔ランドマークで目座標を取得（動画）
+    fp = FrameProcessor(input_video_path, output_video_path)
+    fp.annotate_video(max_num_faces=1)  # 結果は fp.left_eye_coords / fp.right_eye_coords に格納
+
+    # 2) EVT3 を読み込み、トリガからフレームを区切る
+    ep = EventProcessor()
+    ep.load_evt3(raw_path)         # ep.event_data / ep.trigger_events がセットされる
+    ep.get_frame_event_data()          # ep.frame_events がセットされる（未呼び出しでも統合関数内で自動実行）
+
+    # 3) 目イベント→アクティビティ→CSV を一括実行
+    conv_left_eye_coords  = convert_coordinates(fp.width, fp.height, ep.width, ep.height, fp.left_eye_coords)
+    conv_right_eye_coords = convert_coordinates(fp.width, fp.height, ep.width, ep.height, fp.right_eye_coords)
+    
+    ep.filter_eye_events(conv_left_eye_coords, conv_right_eye_coords, margin=margin)
+
+    if eye == "left":
+        event_data = ep.left_eye_events
+    elif eye == "right":
+        event_data = ep.right_eye_events
+
+    ep.calculate_global_activity_history_binned(
+        event_data = event_data,
+        bin_width_us = 1000
+    )
+
+    ep.save_activity_history_to_csv(output_csv_path)
+
 if __name__ == "__main__":
-    main()
+    # ↓どれか一つを実行
+
+    # main()
+    # process_eye_activity_and_save_csv()
+    process_eye_activity_binned_and_save_csv()
     
 
 

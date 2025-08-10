@@ -32,7 +32,7 @@ class waveCluster:
     
     def test(self,
              out_dir,
-            buffer_time=30000,
+            buffer_time=10000,
             step_time=1000,
             grid_H=360,
             grid_W=640,):
